@@ -1,0 +1,110 @@
+// Copyright (c) 2006-2012 Google, Inc. and contributors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Author: Kenton Varda
+//
+// The first pass in parsing Evlan code is lexing.  The lexer converts a flat
+// source file into the data structures below.  The source is split into blocks,
+// statements, and tokens, where a block is a sequence of statements, a
+// statement is a sequence of tokens, and each token may actually be a nested
+// block.
+//
+// The source file file as a whole is parsed to a single Statement (not a Block)
+// since an Evlan module is just one big expression.  If the file contains no
+// block keywords, then it will end up parsing to one big Statement containing
+// all of the tokens.
+//
+// When a line ends with a block keyword (such as "where" or "of"), it
+// indicates that the next line starts a block.  The block continues until
+// the first line which is indented less than the first line of the block.
+// Within the block, each line that is indented equally to the block's first
+// line starts a new statement.
+//
+// For example:
+//   foo where
+//       bar bar bar
+//         bar bar
+//       baz baz baz
+//     qux
+//
+// Here, the "where" begins a block.  The block contains two statements.  The
+// first statement contains all the "bar"s and the second contains the "baz"s.
+// Note that the "bar" statement consists of multiple lines -- the second line
+// continues the same statement because it is indented.  The "qux" line,
+// meanwhile, is indented less than the rest of the block.  Therefore, the block
+// ends before this line.
+//
+// Note that the block above is itself part of the statement which starts with
+// "foo" and ends with "qux".  The entire block ends up appearing as a single
+// token within this statement.
+
+syntax = "proto2";
+
+package evlan.parser;
+
+// A block is a sequence of statements.
+message Block {
+  repeated Statement statement = 1;
+}
+
+// A statement is a sequence of tokens.
+message Statement {
+  repeated Token token = 1;
+}
+
+// A token is either a nested block or a piece of text matching one of the
+// types listed below.
+message Token {
+  enum Type {
+    // This value is never used, but it is defined so that the default value
+    // of the |type| field is not a valid type.
+    NONE = 1;
+
+    // A block.  The |block| field will be filled in, and |text| will not be.
+    // For all other types, |text| is filled in and |block| is not.
+    BLOCK = 2;
+
+    // Keywords may be words like "if" or operators like "+".
+    KEYWORD = 3;
+
+    // An identifier is a string of alphanumeric characters starting with a
+    // letter or underscore.  Any identifier is a valid variable name.
+    IDENTIFIER = 4;
+
+    // An integer is a string of decimal digits not starting with zero OR a
+    // "0x" followed by a string of hex digits OR "0" followed by a string of
+    // octal digits.
+    INTEGER = 5;
+
+    // A quoted string, using the same syntax and escape sequences as C++.
+    // A string literal cannot cross multiple lines (though it can of course
+    // contain escaped newlines).
+    STRING = 6;
+
+    // A non-negative floating-point number in the same syntax as C++
+    // floating-point literals.
+    FLOAT = 7;
+  }
+
+  // One of the above enums.
+  optional Type type = 1;
+
+  // For non-blocks, this contains the precise text of the token, as it appears
+  // in the original file.  For example, for STRINGs, this will include the
+  // beginning and end quotes, and the contents will still be escaped.
+  optional string text = 2;
+
+  // If type == BLOCK, contains the nested block.
+  optional Block block = 3;
+}

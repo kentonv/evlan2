@@ -1,0 +1,199 @@
+# Copyright (c) 2006-2012 Google, Inc. and contributors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Author: Kenton Varda
+
+unittest.suite("BuiltinSupport", cases) where
+  unittest = import "evlan/api/unittest"
+  cases = array of
+    unittest.suite("Boolean", cases) where
+      cases = array of
+        unittest.case("And1",     (true  and true ))
+        unittest.case("And2", not (true  and false))
+        unittest.case("And3", not (false and true ))
+        unittest.case("And4", not (false and false))
+
+        unittest.case("Or1" ,     (true  or  true ))
+        unittest.case("Or2" ,     (true  or  false))
+        unittest.case("Or3" ,     (false or  true ))
+        unittest.case("Or4" , not (false or  false))
+
+        unittest.case("If1", if true  then true  else false)
+        unittest.case("If2", if false then false else true )
+
+    unittest.suite("Integer", cases) where
+      cases = array of
+        unittest.case("Addition"      , 123 + 456 == 579)
+        unittest.case("Subtraction"   , 456 - 123 == 333)
+        unittest.case("Multiplication",   5 *   4 ==  20)
+        unittest.case("Division"      ,  12 /   4 ==   3)
+
+        unittest.case("Equal1"     , not 123 == 122)
+        unittest.case("Equal2"     ,     123 == 123)
+        unittest.case("Equal3"     , not 123 == 124)
+        unittest.case("NotEqual1"  ,     123 != 122)
+        unittest.case("NotEqual2"  , not 123 != 123)
+        unittest.case("NotEqual3"  ,     123 != 124)
+        unittest.case("Less1"      , not 123 <  122)
+        unittest.case("Less2"      , not 123 <  123)
+        unittest.case("Less3"      ,     123 <  124)
+        unittest.case("Greater1"   ,     123 >  122)
+        unittest.case("Greater2"   , not 123 >  123)
+        unittest.case("Greater3"   , not 123 >  124)
+        unittest.case("NotLess1"   , not 123 <= 122)
+        unittest.case("NotLess2"   ,     123 <= 123)
+        unittest.case("NotLess3"   ,     123 <= 124)
+        unittest.case("NotGreater1",     123 >= 122)
+        unittest.case("NotGreater2",     123 >= 123)
+        unittest.case("NotGreater3", not 123 >= 124)
+
+    unittest.suite("Double", cases) where
+      cases = array of
+        unittest.case("Addition"      , 123.25  + 456.25 == 579.5)
+        unittest.case("Subtraction"   , 456.75  - 123.25 == 333.5)
+        unittest.case("Multiplication",   5.125 *   4    ==  20.5)
+        unittest.case("Division"      ,  12.5   /   4    ==   3.125)
+
+        unittest.case("Equal1"     , not 123.5 == 122.5)
+        unittest.case("Equal2"     ,     123.5 == 123.5)
+        unittest.case("Equal3"     , not 123.5 == 124.5)
+        unittest.case("NotEqual1"  ,     123.5 != 122.5)
+        unittest.case("NotEqual2"  , not 123.5 != 123.5)
+        unittest.case("NotEqual3"  ,     123.5 != 124.5)
+        unittest.case("Less1"      , not 123.5 <  122.5)
+        unittest.case("Less2"      , not 123.5 <  123.5)
+        unittest.case("Less3"      ,     123.5 <  124.5)
+        unittest.case("Greater1"   ,     123.5 >  122.5)
+        unittest.case("Greater2"   , not 123.5 >  123.5)
+        unittest.case("Greater3"   , not 123.5 >  124.5)
+        unittest.case("NotLess1"   , not 123.5 <= 122.5)
+        unittest.case("NotLess2"   ,     123.5 <= 123.5)
+        unittest.case("NotLess3"   ,     123.5 <= 124.5)
+        unittest.case("NotGreater1",     123.5 >= 122.5)
+        unittest.case("NotGreater2",     123.5 >= 123.5)
+        unittest.case("NotGreater3", not 123.5 >= 124.5)
+
+    unittest.suite("Atom", cases) where
+      cases = array of
+        unittest.case("Equal1"   ,     @foo == @foo)
+        unittest.case("Equal2"   , not @foo == @bar)
+        unittest.case("NotEqual1",     @foo != @bar)
+        unittest.case("NotEqual2", not @foo != @foo)
+
+    unittest.suite("Array", cases) where
+      arr = {12, 34, 56}
+      mapped = arr.map(i => i + 3)
+      joined = {arr, {78, 90}, {321}, {}, {654}}.join()
+
+      lessThan40 = arr.findAll(i => i < 40)
+      moreThan20 = arr.findAll(i => i > 20)
+
+      cases = array of
+        unittest.case("Element1", arr[0] == 12)
+        unittest.case("Element2", arr[1] == 34)
+        unittest.case("Element3", arr[2] == 56)
+
+        unittest.case("Size", arr.size == 3)
+
+        unittest.case("Map1", mapped.size == 3)
+        unittest.case("Map2", mapped[0] == 15)
+        unittest.case("Map3", mapped[1] == 37)
+        unittest.case("Map4", mapped[2] == 59)
+
+        unittest.case("Fold1", arr.fold(0, (a, b) => a + b) == 12 + 34 + 56)
+        unittest.case("Fold2", {}.fold(@foo, (a, b) => @bar) == @foo)
+
+        unittest.case("Count1", arr.count(i => i < 40) == 2)
+        unittest.case("Count2", arr.count(i => i < 20) == 1)
+
+        unittest.case("Joined1", joined.size == 7)
+        unittest.case("Joined2", joined[0] == 12)
+        unittest.case("Joined3", joined[1] == 34)
+        unittest.case("Joined4", joined[2] == 56)
+        unittest.case("Joined5", joined[3] == 78)
+        unittest.case("Joined6", joined[4] == 90)
+        unittest.case("Joined7", joined[5] == 321)
+        unittest.case("Joined8", joined[6] == 654)
+
+        unittest.case("FindAll1", lessThan40.size == 2)
+        unittest.case("FindAll2", lessThan40[0] == 12)
+        unittest.case("FindAll3", lessThan40[1] == 34)
+        unittest.case("FindAll4", moreThan20.size == 2)
+        unittest.case("FindAll5", moreThan20[0] == 34)
+        unittest.case("FindAll6", moreThan20[1] == 56)
+
+    unittest.suite("String", cases) where
+      allSubstrings = "foobarfoobarfoo".findAllSubstrings("foo")
+      overlappingSubstrings = "fooooobar".findAllSubstrings("ooo")
+
+      cases = array of
+        unittest.case("Ordinal1", "abc".ordinal(0) == 97)
+        unittest.case("Ordinal2", "abc".ordinal(1) == 98)
+        unittest.case("Ordinal3", "abc".ordinal(2) == 99)
+
+        unittest.case("Element1", "abc"[0] == "a")
+        unittest.case("Element2", "abc"[1] == "b")
+        unittest.case("Element3", "abc"[2] == "c")
+
+        unittest.case("Size", "foobar".size == 6)
+
+        unittest.case("Interval", "abcdef".interval(2, 5) == "cde")
+
+        unittest.case("Concatenate", "foo" + "bar" == "foobar")
+
+        unittest.case("Equal1"     , not "bar" == "abc")
+        unittest.case("Equal2"     ,     "bar" == "bar")
+        unittest.case("Equal3"     , not "bar" == "foo")
+        unittest.case("NotEqual1"  ,     "bar" != "abc")
+        unittest.case("NotEqual2"  , not "bar" != "bar")
+        unittest.case("NotEqual3"  ,     "bar" != "foo")
+        unittest.case("Less1"      , not "bar" <  "abc")
+        unittest.case("Less2"      , not "bar" <  "bar")
+        unittest.case("Less3"      ,     "bar" <  "foo")
+        unittest.case("Greater1"   ,     "bar" >  "abc")
+        unittest.case("Greater2"   , not "bar" >  "bar")
+        unittest.case("Greater3"   , not "bar" >  "foo")
+        unittest.case("NotLess1"   , not "bar" <= "abc")
+        unittest.case("NotLess2"   ,     "bar" <= "bar")
+        unittest.case("NotLess3"   ,     "bar" <= "foo")
+        unittest.case("NotGreater1",     "bar" >= "abc")
+        unittest.case("NotGreater2",     "bar" >= "bar")
+        unittest.case("NotGreater3", not "bar" >= "foo")
+
+        unittest.case("StartsWith1",     "foo".startsWith("foo"))
+        unittest.case("StartsWith3", not "foo".startsWith("bar"))
+        unittest.case("StartsWith3",     "foobar".startsWith("foo"))
+        unittest.case("StartsWith4", not "foobar".startsWith("bar"))
+
+        unittest.case("EndsWith1",     "foo".endsWith("foo"))
+        unittest.case("EndsWith2", not "foo".endsWith("bar"))
+        unittest.case("EndsWith3", not "foobar".endsWith("foo"))
+        unittest.case("EndsWith4",     "foobar".endsWith("bar"))
+
+        unittest.case("FindAllSubstrings1", allSubstrings.size == 3)
+        unittest.case("FindAllSubstrings2", allSubstrings[0] == 0)
+        unittest.case("FindAllSubstrings3", allSubstrings[1] == 6)
+        unittest.case("FindAllSubstrings4", allSubstrings[2] == 12)
+        unittest.case("FindAllSubstrings5",
+          "foo".findAllSubstrings("bar").size == 0)
+        unittest.case("FindAllSubstrings6", overlappingSubstrings.size == 3)
+        unittest.case("FindAllSubstrings7", overlappingSubstrings[0] == 1)
+        unittest.case("FindAllSubstrings8", overlappingSubstrings[1] == 2)
+        unittest.case("FindAllSubstrings9", overlappingSubstrings[2] == 3)
+
+        unittest.case("HasSubstring1", "foobar".hasSubstring("foo"))
+        unittest.case("HasSubstring2", "foobar".hasSubstring("bar"))
+        unittest.case("HasSubstring3", "foobar".hasSubstring("oba"))
+        unittest.case("HasSubstring4", "foobar".hasSubstring("o"))
+        unittest.case("HasSubstring5", not "foobar".hasSubstring("baz"))

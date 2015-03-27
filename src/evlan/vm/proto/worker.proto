@@ -1,0 +1,300 @@
+// Copyright (c) 2006-2012 Google, Inc. and contributors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Author: Kenton Varda
+//
+// RPC protocol for Evlan workers -- servers which may host distributed
+// functions and evaluate Evlan code.
+//
+// Note that all streams are turn-based.  That is, after the client sends
+// the initial request, it must wait for the server to stream back a response
+// before it sends any upstream requests, and after sending an upstream
+// response, it must wait for another stream from the server before sending
+// another stream, and so on.  Similarly, the server can only send one stream
+// in response to the initial request, and then must wait for upstreams from
+// the client before sending further streams.  The server is not allowed to
+// send a final RPC response if it is still waiting for an upstream, unless
+// that final response is an error.
+//
+// Also note that for all bidirectional streams, the client is allowed to
+// cancel at any time, and is indeed encouraged to cancel the RPC if it has
+// received everything it needs.
+
+syntax = "proto2";
+
+option cc_generic_services = true;
+package evlan.vm.proto;
+
+import "google/protobuf/descriptor.proto";
+import "evlan/vm/proto/marshal.proto";
+
+// ===================================================================
+// Error description
+
+enum ErrorType {
+  NONE = 1;             // Call succeeded.
+  TRANSIENT = 2;        // Trying again is safe and might succeed.
+  PERMANENT = 3;        // Trying again is guaranteed to fail again.
+  OVERLOADED = 4;       // Trying again could succeed but would exacerbate the
+                        // server's resource shortage, so please don't.
+}
+
+// Describes an application-level error (as opposed to a network error).
+message Error {
+  optional ErrorType type = 1 [default = NONE];
+  optional string description = 2;   // human-readable
+}
+
+// ===================================================================
+// Get, Put, and Call -- High-level RPCs
+
+// -------------------------------------------------------------------
+// Get(GetRequest)
+//   streams(PushValuesMessage)
+//   upstreams(PullValuesMessage)
+//   returns(GetResponse)
+//
+// Asks the server to send back a set of values.  The values must be
+// persistent -- e.g. values that were placed on the server by a previous Put()
+// and which haven't been reclaimed by garbage collection.
+//
+// Note that the client is welcome to cancel the RPC as soon as it has received
+// all the values it needs.
+
+message GetRequest {
+  optional PullValuesMessage initial_pull = 1;
+}
+
+message GetResponse {
+  optional Error error = 1;
+
+  // A single push containing *all* requested values.
+  // complete_push.values.other_value_id must only contain values which the
+  // server knows that the client already has.  In this case, there is
+  // no need for the caller to send any further pulls, so the RPC can be closed
+  // immediately.
+  optional PushValuesMessage complete_push = 2;
+}
+
+// -------------------------------------------------------------------
+// Put(PutRequest)
+//   streams(PullValuesMessage)
+//   upstreams(PushValuesMessage)
+//   returns(PutResponse)
+//
+// Asks the server to take a value and make it persistent, meaning that the
+// server will hold on to it and service requests for it until it is reclaimed
+// by distributed garbage collection.
+
+message PutRequest {
+  optional PushValuesMessage initial_push = 1;
+
+  // Indexes of values which should be made persistent.  Other values in the
+  // push are only provided because the persistent values depend on them.
+  repeated int32 persistent_value_index = 2 [packed = true];
+}
+
+message PutResponse {
+  optional Error error = 1;
+}
+
+// -------------------------------------------------------------------
+// Call(CallRequest)
+//   streams(PushPullValuesMessage)
+//   upstreams(PushPullValuesMessage)
+//   returns(CallResponse)
+//
+// Asks the server to evaluate a function call.  This RPC goes through two
+// phases.  In the first phase, the server has not yet received all the
+// values it needs from the client, so it streams back PullValueMessages and
+// expects PushValueMessages in response.  Once everything is received, the
+// server evaluates the function.  Then the RPC is in the second phase, during
+// which the result is being transferred to the client.  In this phase, the
+// server streams back PushValueMessages and the client upstreams
+// PullValueMessages.  The client may also cancel the RPC as soon as it has
+// received all of the values it needs.
+
+message CallRequest {
+  // The push should contain a final_result_index.  The server takes the value
+  // at that index, constructs it, and then re-marshals it and sends it back as
+  // the final result.  Typically, the final_result_index points at a
+  // FunctionCall value.
+  optional PushValuesMessage initial_push = 1;
+}
+
+message CallResponse {
+  optional Error error = 1;
+
+  // Same as GetResponse.complete_push.
+  optional PushValuesMessage complete_push = 2;
+}
+
+// ===================================================================
+// Low-level ops.
+//
+// These RPCs are executed on behalf of some other RPC.  For example, Alice
+// might send a Get() RPC to Bob.  Bob might then decide to delegate the task
+// to Charlie.  So, Bob sends a PullValues() RPC to Charlie with Alice's
+// address in the send_to.  Charlie may then send a PushValues() RPC directly
+// back to Alice to satisfy the original request.
+//
+// Notes about this example:
+// * Charlie does not send a response back to Bob until the RPC to Alice
+//   completes, and Bob does not respond to Alice until the RPC to Charlie
+//   completes (although Alice may have canceled by then, having already
+//   received what she wanted from Charlie).  This way, the original RPC stays
+//   active until all subordinate RPCs have completed.  However, Bob may
+//   choose to stream some values back to Alice at the same time as he tells
+//   Charlie to push some other values to her.
+// * If the values that Charlie pushes to Alice depend on other_value_ids which
+//   Alice doesn't have, then Alice should stream back a PullValuesMessage for
+//   these to *Charlie*, not to Bob.  This is preferred because Charlie is more
+//   likely to have these values, since he was the one who provided their IDs.
+//   Furthermore, Alice is not allowed to stream anything to Bob unless Bob
+//   streams to her first, so she might not even be able to ask Bob for the
+//   values.
+
+// -------------------------------------------------------------------
+// PushValues(PushValuesMessage)
+//   streams(PullValuesMessage)
+//   upstreams(PushValuesMessage)
+//   returns(PushValuesResponse)
+
+message PushValuesResponse {
+  optional Error error = 1;
+}
+
+// -------------------------------------------------------------------
+// PullValues(PullValuesMessage)
+//   streams(PushValuesMessage)
+//   upstreams(PullValuesMessage)
+//   returns(PullValuesResponse)
+
+message PullValuesResponse {
+  optional Error error = 1;
+}
+
+// ===================================================================
+// Garbage Collection
+
+// -------------------------------------------------------------------
+// Mark(MarkRequest) returns(MarkResponse)
+//
+// Mark a set of values as reachable.  The receiver is required to recursively
+// mark any values that these values depend on.  This may involve sending
+// MarkRequests to other servers.  All of these recursive marks must complete
+// successfully before the receiver responds to the original MarkRequest.
+//
+// Note that newly-created values should always be marked immediately upon
+// creation, as they are clearly reachable at that time.
+
+message MarkRequest {
+  repeated bytes value_id = 1;
+}
+
+message MarkResponse {
+  // Note that in the case of errors, the client *must* either retry the mark
+  // or give up and assume the values no longer exist on the server.  This means
+  // that it may have to retry even if the error type is OVERLOADED.
+  optional Error error = 1;
+}
+
+// -------------------------------------------------------------------
+// Sweep(SweepRequest) returns(SweepResponse)
+//
+// Reclaim all values that were not marked since the last sweep.
+
+message SweepRequest {
+  // If a worker receives two consecutive sweeps with the same ID, it should
+  // ignore the latter one.  This ensures that Sweep() RPCs are idempotent.
+  // The worker should not make any other assumptions about sweep IDs -- they
+  // may not have any particular order, and they may repeat (just not
+  // consecutively).
+  optional int32 sweep_id = 1;
+}
+
+message SweepResponse {
+  optional Error error = 1;
+}
+
+// ===================================================================
+// The service
+//
+// See above for extended documentation on each method.
+
+extend google.protobuf.MethodOptions {
+  optional string downstream_type = 51310;
+  optional string upstream_type = 51311;
+  optional bool fail_fast = 51313;
+}
+
+extend google.protobuf.ServiceOptions {
+  optional int32 upstream_grace_period_ms = 51312;
+}
+
+service EvlanWorker {
+  // No upstream grace period needed due to turn-based protocol.
+  option (upstream_grace_period_ms) = 0;
+
+  // -----------------------------------------------------------------
+  // Main ops.
+
+  // Get persistent values stored on this server.
+  rpc Get(GetRequest) returns(GetResponse) {
+    option (downstream_type) = "evlan.vm.proto.PullValuesMessage";
+    option (upstream_type) = "evlan.vm.proto.PushValuesMessage";
+    option (fail_fast) = true;
+  }
+
+  // Command this server to hold some values persistently (subject to
+  // distributed garbage collection).
+  rpc Put(PutRequest) returns(PutResponse) {
+    option (downstream_type) = "evlan.vm.proto.PushValuesMessage";
+    option (upstream_type) = "evlan.vm.proto.PullValuesMessage";
+    option (fail_fast) = true;
+  }
+
+  // Call a function present on the server.
+  rpc Call(CallRequest) returns(CallResponse) {
+    option (downstream_type) = "evlan.vm.proto.PushPullValuesMessage";
+    option (upstream_type) = "evlan.vm.proto.PushPullValuesMessage";
+    option (fail_fast) = true;
+  }
+
+  // -----------------------------------------------------------------
+  // Low-level ops.
+
+  // Generic push, done as part of some other operation.
+  rpc PushValues(PushValuesMessage) returns(PushValuesResponse) {
+    option (downstream_type) = "evlan.vm.proto.PullValuesMessage";
+    option (upstream_type) = "evlan.vm.proto.PushValuesMessage";
+    option (fail_fast) = true;
+  }
+
+  // Generic pull, done as part of some other operation.
+  rpc PullValues(PullValuesMessage) returns(PullValuesResponse) {
+    option (downstream_type) = "evlan.vm.proto.PushValuesMessage";
+    option (upstream_type) = "evlan.vm.proto.PullValuesMessage";
+    option (fail_fast) = true;
+  }
+
+  // -----------------------------------------------------------------
+  // Garbage collection
+
+  // Mark values as reachable.
+  rpc Mark(MarkRequest) returns(MarkResponse);
+
+  // Sweep unmarked values.
+  rpc Sweep(SweepRequest) returns(SweepResponse);
+}

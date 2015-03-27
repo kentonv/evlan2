@@ -1,0 +1,59 @@
+#! /bin/sh
+
+# Copyright (c) 2006-2012 Google, Inc. and contributors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -eu
+
+if test $# = 0; then
+  echo trigger file:evlan/public/build_defs_test/qux_test_test.ekam-rule
+  exit 0
+fi
+
+die () {
+  echo "$@" >&2
+  exit 1
+}
+
+echo findInput evlan/public/build_defs_test/qux_test
+read QUX_TEST
+
+if test "$QUX_TEST" == ""; then
+  echo "error:  couldn't find qux_test." >&2
+  exit 1
+fi
+
+echo newOutput "${1}.tmp-output"
+read OUT
+
+$QUX_TEST > $OUT \
+  || die "qux_test failed."
+
+grep -q '^\[ PASSED \] 8 of 8 tests$' $OUT \
+  || die "qux_test didn't output correct PASSED message."
+grep -q 'FAILED' $OUT \
+  && die "qux_test wrote FAILED message when not expected."
+
+INJECT_TEST_FAILURE= $QUX_TEST > $OUT \
+  && die "qux_test didn't fail when expected."
+
+grep -q '^\[ PASSED \] 6 of 8 tests$' $OUT \
+  || die "qux_test didn't output correct partial PASSED message."
+grep -q '^\[ FAILED \] QuxTest\.ShouldNotFail: Condition evaluated false\.$' $OUT \
+  || die "qux_test didn't output correct FAILED message."
+grep -q '^\[ FAILED \] QuxTest\.ShouldNotTypeFail: Type error:' $OUT \
+  || die "qux_test didn't output correct FAILED message."
+
+echo passed
+exit 0

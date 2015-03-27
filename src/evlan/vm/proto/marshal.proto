@@ -1,0 +1,277 @@
+// Copyright (c) 2006-2012 Google, Inc. and contributors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Author: Kenton Varda
+//
+// Low-level protocol for marshalling and transmitting Evlan value graphs.
+
+syntax = "proto2";
+package evlan.vm.proto;
+
+message ServerAddress {
+  optional string service_name = 1;
+
+  // Address of the machine running the server.  Typically only one of these
+  // is filled in.  If multiple are filled in they must all work.
+  optional fixed32 ip4_address = 2;
+  optional string dns_address = 3;
+
+  // Needed if ip4_address or dns_address is used.
+  optional int32 port_number = 5;
+}
+
+// ===================================================================
+// Basic value marshalling.
+
+// First, a note on value IDs:  Any value can have an ID associated with it.
+// This ID is an arbitrary string which uniquely identifies the value.
+// The mapping of IDs to value is n:1 -- an individual value may have several
+// assigned IDs or none at all, but a particular ID maps to only one value.
+// Typically, IDs should be derived as some sort of secure hash of the value,
+// so that if two identical values are created independently, they will end up
+// with the same ID (the hash must be secure to avoid collisions).  However,
+// this rule is only suggested as an optimization to eliminate redundancy; it
+// is not strictly required.
+
+// Contains a chunk of an Evlan value graph to be shipped between servers.
+message MarshalledValues {
+  // Each element of each of the following arrays is one value in the graph.
+  // Some elements refer to other elements by index.  The index spans across
+  // all the arrays.  So, for example, if there are three integers, two doubles,
+  // and four data_values, then the index 1 refers to the second integer, 3
+  // refers to the first double, and 7 refers to the third data_value.
+  //
+  // Note that since the ID of an integer, double, or typical atom would be
+  // larger than the value itself, we never need to assign IDs to them.  We
+  // also typically don't want to assign IDs to data_values, but one can be
+  // assigned by adding a function_call which invokes the identity function on
+  // the data_value, and assigning an ID to that.  Or, just use bid_data_value
+  // instead.
+  //
+  // Remember that field numbers 1 through 15 are only one byte, so only use
+  // them for small, common value types.
+  repeated sint32 integer_value = 1 [packed = true];
+  repeated double double_value = 2 [packed = true];
+  repeated string atom_value = 3;
+  repeated bytes data_value = 4;
+  repeated BigData big_data_value = 17;
+  repeated Function function_value = 5;
+  repeated FunctionCall function_call = 6;
+  repeated Sequence sequence_value = 7;
+  repeated RemoteValue remote_value = 8;
+
+  // IDs of values that were *not* sent, because the sender assumes that the
+  // receiver already has these values.  If the receiver does not have these
+  // values, it will need to fetch them somehow; see the RPC protocol below
+  // for some ways to do this.  other_value_id counts as one of the value
+  // arrays -- so if you have a MarshalledValues with two integer_values, three
+  // other_value_ids, and nothing else, then index 4 refers to the second
+  // other_value_id.
+  repeated bytes other_value_id = 15;
+
+  // Values in remote_value may refer to this.
+  repeated ServerAddress server_address = 16;
+}
+
+// Used to represent a large byte array.
+message BigData {
+  // The ID of this value.  May be omitted if the originator doesn't think it
+  // worthwhile to assign one.
+  optional bytes id = 1;
+
+  // The data.
+  // TODO(kenton):  When protobufs supports a more-efficient representation
+  //   than string, use it.
+  optional bytes value = 2;
+}
+
+// Combines a code tree with an environment to create a function.
+message Function {
+  // The ID of this value.  May be omitted if the originator doesn't think it
+  // worthwhile to assign one.
+  optional bytes id = 1;
+
+  // Environment in which the code is to be evaluated.  Each element is a
+  // *one-based* index into the enclosing MarshalledValues (note that this
+  // differs from most indices which are zero-based).  The special value zero
+  // is used to indicate a null value -- the sender asserts that this value
+  // will never actually be used by the function.  (This allows greater
+  // optimization freedom for the VM.)  The sender only needs to send a prefix
+  // of the environment.  The remaining values are assumed to be null, except
+  // for values in the module's constant table, which are constants and thus
+  // need not be sent.
+  repeated int32 environment = 2 [packed = true];
+
+  // Same as Module.code_tree, except that variables refer into the function's
+  // environment rather than the "constant table".  code_tree must be empty
+  // if code_offset_in_parent is present.
+  repeated int32 code_tree = 3 [packed = true];
+
+  // Index within the MarshalledValues of a function whose environment should be
+  // appended to this function's environment.  This is useful when several
+  // functions are constructed within the body of some outer function -- all
+  // the inner functions share the outer function's environment.
+  optional int32 parent = 4;
+
+  // If the function's code tree is actually a sub-tree of the parent function,
+  // then this is the offset of that sub-tree from the beginning of the
+  // parent's code_tree.  In this case, this function does not provide its own
+  // code_tree.
+  optional int32 code_offset_in_parent = 5;
+}
+
+// A value which should be obtained via a function call.  This is useful for
+// encoding some data more efficiently.  For example, the function might be
+// the parser for a protocol message type, and the parameter would be one of
+// the data_values in the MarshalledValues.  This way MarshalledValues can just
+// be a thin wrapper aound an arbitrary protocol message.
+message FunctionCall {
+  // The ID of this value.  May be omitted if the originator doesn't think it
+  // worthwhile to assign one.
+  optional bytes id = 1;
+
+  // Index of the function and parameter in the containing MarshalledValues.
+  optional int32 function_index = 2;
+  optional int32 parameter_index = 3;
+}
+
+message Sequence {
+  // The ID of this value.  May be omitted if the originator doesn't think it
+  // worthwhile to assign one.
+  optional bytes id = 1;
+
+  // Indexes of each element.
+  repeated int32 element = 2 [packed=true];
+
+  enum Type {
+    ARRAY = 0;
+    TUPLE = 1;
+  }
+  optional Type type = 3 [default=ARRAY];
+}
+
+// A value that lives on a remote EvlanWorker.  The value must be a persistent
+// value on said machine, meaning that it is subject to distributed garbage
+// collection and cannot simply disappear.  The receiver of a RemoteValue
+// should not attempt to fetch the value directly, but should instead wait until
+// it is invoked, and then use an EvlanWorker.Call RPC to call it remotely.
+message RemoteValue {
+  // The ID of the local stub for this value.  May be omitted if the originator
+  // doesn't think it worthwhile to assign one.
+  optional bytes id = 1;
+
+  // The ID of this value on the remote machine.
+  //
+  // Note that id and remote_id are cucially different:  remote_id is the ID
+  // of the original value on the machine where it lives, but id is the ID
+  // of the *stub* object which, when invoked, calls that remote machine.
+  // These have to be different because the user expects that they are
+  // different, even though they have identical semantics.
+  optional bytes remote_id = 2;
+
+  // How to contact the EvlanWorker that owns this value.  This is an index
+  // into the "server_address" field of the enclosing MarshalledValues.
+  optional int32 address_index = 3;
+}
+
+// ===================================================================
+// Push and Pull
+//
+// These are building blocks of Evlan RPCs, used to move values between
+// machines.
+//
+// In the documentation below, we talk about Alice and Bob.  Alice is always
+// the server which is sending the message being documented, whereas Bob is the
+// one receiving it.
+
+// Alice is delivering some values to Bob.  What the values are for depends on
+// which RPC method is being called, but typically they are in response to a
+// previous PullValuesMessage.
+message PushValuesMessage {
+  // Values which Alice wishes to deliver to Bob.  Bob can ignore these if he
+  // is uninterested in them.  If values contains any other_value_ids, then
+  // Alice promises to honor any pull request for these IDs made by Bob or
+  // anyone else at least until the current RPC completes.
+  optional MarshalledValues values = 1;
+
+  // If one of the values is, in fact, the final result of the operation (i.e.
+  // the return value during a Call() RPC), then final_result_index is the index
+  // of that value.  Note that the RPC is not over when this is sent -- the
+  // final result may refer to other values that Bob doesn't have, in which case
+  // he will have to request them from Alice.
+  optional int32 final_result_index = 2;
+
+  // Refers to the request_ids of previous PullValuesMessages sent by Bob to
+  // Alice.  Alice claims that these requests are now done -- Bob should have
+  // received all the requested values either directly from Alice or from other
+  // machines working on Alice's behalf.  If Bob decides that this is not true,
+  // and that some of the values he requested have not been delivered, then he
+  // should probably log an error and cancel the operation, because this
+  // indicates that one of the Evlan workers involved is misbehaving.  Simply
+  // re-sending the request for the missing values would probably fail again in
+  // the same way.  Note that Bob should *not* wait for a request_id to be
+  // returned in completed_request_id before acting on it.  completed_request_id
+  // exists only for fast error detection.
+  repeated int32 completed_request_id = 3 [packed = true];
+}
+
+// Alice would like for Bob to provide her with some set of values.  The purpose
+// depends on which RPC method is being called, but typically Alice sends
+// this after Bob sent a PushValuesMessage that referred to some values by ID
+// only, and Alice did not have those values locally.
+message PullValuesMessage {
+  // Values which Alice needs in order to complete a previous request made
+  // by Bob.  Upon receipt, it becomes Bob's responsibility to arrange for
+  // these values to be sent to Alice, either directly or by telling someone
+  // else to send them on Bob's behalf (via an independent PushValues() RPC).
+  repeated bytes requested_value = 1;
+
+  // Request ID.  Once Bob believes that he has delivered all of the requested
+  // values to Alice, he may pass back this ID as a completed_request_id to let
+  // Alice know that he believes the request is complete.  This is for error
+  // detection only; Alice should not wait for a request_id to show up in
+  // completed_request_id if she has already received all the values.
+  optional int32 request_id = 2;
+
+  // As a hint, the client may send the IDs of some values that it already has
+  // on its end which it suspects may be dependencies of the values being
+  // requested.  This allows the server to avoid sending these values, and
+  // makes it easier for the server to respond with an immediate GetResponse
+  // rather than streaming.
+  repeated bytes known_value = 3;
+
+  // If present, says that Alice would like for Bob to send the requested values
+  // directly to the given address.  However, Bob may choose to ignore this and
+  // stream the values directly back to Alice.  send_to may, in fact, just be
+  // Alice's own address -- this allows Bob to forward Alice's address to others
+  // working on Bob's behalf, so that those others may send values directly back
+  // to Alice rather than going back through Bob.
+  optional ServerAddress send_to = 4;
+
+  // Hint to Bob.  If true, then Alice would prefer that Bob simply stream back
+  // the requested values, ignoring the send_to field.  Otherwise, Alice would
+  // prefer that Bob open a direct connection to the send_to address.  Typically
+  // Alice would set this to true if the send_to address is actually Alice's
+  // own address, or false if it is someone else's address on whose behalf
+  // Alice is working.
+  optional bool send_to_stream = 5 [default=true];
+}
+
+// Combines both a Push and a Pull in one request.  This is used in particular
+// for the EvlanWorker.Call() RPC, which involves sending a parameter to a
+// server as well as receiving a result from the server.
+message PushPullValuesMessage {
+  optional PushValuesMessage push = 1;
+  optional PullValuesMessage pull = 2;
+}

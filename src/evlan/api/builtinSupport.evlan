@@ -1,0 +1,239 @@
+# Copyright (c) 2006-2012 Google, Inc. and contributors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Author: Kenton Varda
+#
+# This file defines the interfaces of various built-in Evlan types.  All basic
+# data types in Evlan are actually objects, with members (methods, mostly)
+# defined here.  The SupportCodeManager (see evlan/vm/builtin/support.h)
+# attaches this code to the built-in types.
+
+builtinSupport where
+  # The "builtin" module is proveded by the VM and implemented directly in C++.
+  builtin = import "builtin"
+
+  # TODO(kenton):  Once Evlan's optimization is improved, get rid of this
+  #   block and just refer to the various members of builtin directly below.
+  builtinInteger  = builtin.integer
+  builtinDouble   = builtin.double
+  builtinBoolean  = builtin.boolean
+  builtinAtom     = builtin.atom
+  builtinArray    = builtin.$array
+  builtinString   = builtin.bytes
+  builtinProtobuf = builtin.protobuf
+
+  # Makes an array of the given size, using makeElement() to make each element.
+  #
+  # TODO(kenton):  This should be exposed publicly somewhere.
+  makeArray(size, makeElement) = loop(builtinArray.builder(size), size) where
+    loop(builder, i) =
+      if i == 0
+        then builder
+        else loop(builder(makeElement(size - i)), i - 1)
+
+  # Each member of this object is a function which takes a basic value and
+  # returns an object containing the members that that value should have.
+  builtinSupport = object of
+    boolean = self => object of
+      # Note:  $ forces the following word to be treated as an identifier
+      #   rather than a keyword.
+      $and = other => builtinBoolean.$and(self, other)
+      $or  = other => builtinBoolean.$or (self, other)
+
+      $not = builtinBoolean.$not(self)
+
+      $if = (trueClause, falseClause) =>
+        builtinBoolean.$if(self, trueClause, falseClause)
+
+    integer = self => object of
+      add      = other => builtinInteger.add     (self, other)
+      subtract = other => builtinInteger.subtract(self, other)
+      multiply = other => builtinInteger.multiply(self, other)
+      divide   = other => builtinInteger.divide  (self, other)
+
+      equal      = other => builtinInteger.equal     (self, other)
+      notEqual   = other => builtinInteger.notEqual  (self, other)
+      less       = other => builtinInteger.less      (self, other)
+      greater    = other => builtinInteger.greater   (self, other)
+      notGreater = other => builtinInteger.notGreater(self, other)
+      notLess    = other => builtinInteger.notLess   (self, other)
+
+      negate = builtinInteger.negate(self)
+
+    double = self => object of
+      add      = other => builtinDouble.add     (self, other)
+      subtract = other => builtinDouble.subtract(self, other)
+      multiply = other => builtinDouble.multiply(self, other)
+      divide   = other => builtinDouble.divide  (self, other)
+
+      equal      = other => builtinDouble.equal     (self, other)
+      notEqual   = other => builtinDouble.notEqual  (self, other)
+      less       = other => builtinDouble.less      (self, other)
+      greater    = other => builtinDouble.greater   (self, other)
+      notGreater = other => builtinDouble.notGreater(self, other)
+      notLess    = other => builtinDouble.notLess   (self, other)
+
+      negate      = builtinDouble.negate(self)
+      floor       = builtinDouble.floor(self)
+      round       = builtinDouble.round(self)
+
+    atom = self => object of
+      equal    = other => builtinAtom.equal(self, other)
+      notEqual = other => builtinBoolean.$not(builtinAtom.equal(self, other))
+
+    $array = self => object of
+      element = index => builtinArray.element(self, index)
+      size = builtinArray.size(self)
+      interval(start, end) = builtinArray.interval(self, start, end)
+
+      # Creates a new array containing the results of applying mapElement() to
+      # each element of this array.
+      map(mapElement) = makeArray(size, i => mapElement(element(i)))
+
+      mapWithIndex(mapElement) = makeArray(size, i => mapElement(i, element(i)))
+
+      # Iterate through all elements in the array and call
+      # foldFunction(value, element) on each one.  For each call, |value| is
+      # the value returned by the previous call, or |initialValue| for the
+      # first call.  Returns the value returned by the last call.
+      fold(initialValue, foldFunction) = loop(initialValue, 0) where
+        loop(value, i) =
+          if i == size
+            then value
+            else loop(foldFunction(value, element(i)), i + 1)
+
+      sequentialMap(initialValue, foldMapFunction) = result where
+        result = loop(initialValue, builtinArray.builder(size), 0)
+        loop(value, builder, i) =
+          if i == size
+            then {elements = builder, finalValue = value}
+            else loop(r.nextValue, builder(r.element), i + 1) where
+              r = foldMapFunction(value, element(i))
+
+      # Returns the number of elements in the array for which
+      # shouldCountElement(element) returns true.
+      count(shouldCountElement) = fold(0, foldFunc) where
+        foldFunc(total, element) =
+          if shouldCountElement(element)
+            then total + 1
+            else total
+
+      contains(isMatch) = loop(0) where
+        loop(i) =
+          if i == size
+            then false
+          else if isMatch(element(i))
+            then true
+            else loop(i + 1)
+
+      # For an array of arrays, concatenates all of the sub-arrays into a
+      # single array.  For example:
+      #   {{1, 2}, {@x, {3, 4}}, {}, {"foo"}}.join()
+      # evaluates to:
+      #   {1, 2, @x, {3, 4}, "foo"}
+      #join() = result where
+      #  size = fold(0, (total, element) => total + element.size)
+      #  result = fold(builtinArray.builder(size), applyToAll)
+      #  applyToAll(builder, subArray) =
+      #    subArray.fold(builder, (builder, element) => builder(element))
+      join() = builtinArray.join(self)
+
+      # Returns an array containing all of the elements of this array for which
+      # shouldIncludeElement(element) returns true.
+      findAll(shouldIncludeElement) =
+        map(element => if shouldIncludeElement(element) then {element} else {})
+          .join()
+
+    string = self => object of
+      ordinal = index => builtinString.element(self, index)
+      element = index => builtinString.interval(self, index, index + 1)
+      size = builtinString.size(self)
+      interval = (start, end) => builtinString.interval(self, start, end)
+
+      add = other => builtinString.concatenate(self, other)
+
+      equal      = other => builtinString.equal     (self, other)
+      notEqual   = other => builtinString.notEqual  (self, other)
+      less       = other => builtinString.less      (self, other)
+      greater    = other => builtinString.greater   (self, other)
+      notGreater = other => builtinString.notGreater(self, other)
+      notLess    = other => builtinString.notLess   (self, other)
+
+      # Returns true if the string starts with the given prefix.
+      startsWith(prefix) =
+        if size >= prefix.size
+          then interval(0, prefix.size) == prefix
+          else false
+
+      # Returns true if the string ends with the given suffix.
+      endsWith(suffix) =
+        if size >= suffix.size
+          then interval(size - suffix.size, size) == suffix
+          else false
+
+      # Returns an array of integers.  Each element is the index of one
+      # instance of the given substring within this string.  If the substring
+      # does not appear at all, returns an empty array.
+      findAllSubstrings(substring) =
+        if size < substring.size
+          then {}
+          else makeArray(size - substring.size + 1, tryIndex).join() where
+            tryIndex(i) =
+              if interval(i, i + substring.size) == substring
+                then {i}
+                else {}
+
+      # Returns true if the string contains any instances of the given
+      # substring.
+      # TODO(kenton):  If we implemented this as:
+      #     findAllSubstrings(substring) > 0
+      #   then it would be more parallelizable, since findAllSubstrings() is
+      #   parallelizable, but would potentially be slower in the serialized
+      #   case.  Don't care for now because parallelization is a long way away.
+      hasSubstring(substring) = loop(0) where
+        loop(i) =
+          if i + substring.size > size
+            then false
+          else if interval(i, i + substring.size) == substring
+            then true
+            else loop(i + 1)
+
+      #split(delimiter) = result where
+      #  splitPoints = {{-delimiter.size},
+      #                 findAllSubstrings(delimiter),
+      #                 {size}}.join()
+      #  makePart(i) = interval(splitPoints[i] + delimiter.size,
+      #                         splitPoints[i + 1])
+      #  result = makeArray(splitPoints.size - 1, makePart)
+
+      split(delimiter) = builtinString.split(self, delimiter)
+
+    protobuf = self => object of
+      has = field => builtinProtobuf.has(self, field)
+
+      extension = name => builtinProtobuf.extension(self, name)
+      hasExtension = name => builtinProtobuf.hasExtension(self,name)
+
+    protobufRepeated = self => object of
+      element = index => builtinProtobuf.repeatedElement(self, index)
+      size = builtinProtobuf.repeatedSize(self)
+
+    protobufBuilder = self => object of
+      build = () => builtinProtobuf.build(self)
+
+      extension = (id, value) => builtinProtobuf.setExtension(self, id, value)
+
+    protobufType = self => object of
+      builder = builtinProtobuf.builder(self)
+      defaultInstance = builtinProtobuf.defaultInstance(self)

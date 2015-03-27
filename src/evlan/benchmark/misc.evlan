@@ -1,0 +1,100 @@
+# Copyright (c) 2006-2012 Google, Inc. and contributors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Author: Kenton Varda
+#
+# Miscellaneous benchmarks.
+
+unittest.suite("Misc", cases) where
+  unittest = import "evlan/api/unittest"
+
+  # Greatest common denominator.
+  gcd(a, b) =
+    # Original Euclidean algorithm, not the fastest!
+    # TODO(kenton):  Use % operator when available.
+    if a == b
+      then a
+    else if a < b
+      then gcd(a, b-a)
+      else gcd(a-b, b)
+
+  cases = array of
+    unittest.benchmark("Noop", f => 0)
+
+    # The body of this function should be reduced to the constant 21 if the
+    # implementation is intelligent.  (As of this writing, it isn't.)
+    unittest.benchmark("ComputedConstant", f => gcd(1071, 1029))
+
+    unittest.suite("Function", cases) where
+      g(x, y) = x
+      cases = array of
+        unittest.benchmark("Creation", f => x => f(x + 1))
+        unittest.benchmark("Call", f => f(1))
+        unittest.benchmark("MultiParamCall", f => f(1, 1))
+        unittest.benchmark("ExtractParameter", f => f(g)(1, 1))
+
+    unittest.suite("Object", cases) where
+      cases = array of
+        unittest.benchmark("Creation", func) where
+          func(f) = {foo = f, bar = f, baz = f}
+        unittest.benchmark("Lookup", func) where
+          func(f) = f(obj).foo
+          obj = {foo = 1, bar = 2, baz = 3}
+
+    unittest.suite("Operators", cases) where
+      cases = array of
+        unittest.benchmark("Comparison", f => if f(true) then @a else @b)
+        unittest.benchmark("Arithmetic", f => f(1) + f(1))
+        # It doesn't seem worthwhile to test other operators right now since
+        # they're not going to perform much differently than the above.
+
+    unittest.suite("GreatestCommonDivisor", cases) where
+      cases = array of
+        unittest.benchmark("12_18", f => gcd(f(12), f(18)))
+        unittest.benchmark("1071_1029", f => gcd(f(1071), f(1029)))
+
+    unittest.suite("Fibonacci", cases) where
+      fib = i => if i < 2 then i else fib(i-1) + fib(i-2)
+      cases = array of
+        unittest.benchmark( "5", f => fib(f( 5)))
+        unittest.benchmark("10", f => fib(f(10)))
+        # TODO(kenton):  Add bigger cases once they run reasonably fast and
+        #   properly garbage collect.
+
+    unittest.suite("RecursiveCount", cases) where
+      # Get direct references to the two builtin functions that we use rather
+      # than using operators.  As of this writing, operators are implemented in
+      # builtinSupporte.evlan in such a way that they allocate a significant
+      # amount of stuff on the heap which cannot be withdrawn, and this
+      # particular test was explicitly written to test withdrawing of heap
+      # allocations.  Future optimizations should make operators work better
+      # and avoid this problem.
+      subtract = import "builtin".integer.subtract
+      equal = import "builtin".integer.equal
+      count(x) = if equal(x, 0) then 0 else count(subtract(x, 1))
+      cases = array of
+        unittest.benchmark(  "4", f => count(f(  4)))
+        unittest.benchmark( "16", f => count(f( 16)))
+        unittest.benchmark("256", f => count(f(256)))
+        # TODO(kenton):  Add bigger cases once they run reasonably fast and
+        #   properly garbage collect.
+
+    # This case is here just to prove that Environment::TryWithdrawSelf()'s
+    # behavior of recursively withdrawing the parent is useful.  (No other
+    # benchmark in this file exercises this case.)
+    unittest.benchmark("CascadingWithdraw", cascadingWithdraw) where
+      cascadingWithdraw(f) = z(z) where
+        x = f(f)
+        y = x(x)
+        z = y(y)

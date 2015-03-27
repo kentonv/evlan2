@@ -1,0 +1,70 @@
+// Copyright (c) 2006-2012 Google, Inc. and contributors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Author: Kenton Varda
+
+syntax = "proto2";
+
+package evlan.vm.builtin;
+
+message TestAllTypes {
+  // One field for each C++ type.  We don't need to cover every wire type
+  // since the Evlan glue code does not actually deal directly with
+  // serialization or parsing.
+
+  optional int32         optional_int32   =  1;
+  optional int64         optional_int64   =  2;
+  optional uint32        optional_uint32  =  3;
+  optional uint64        optional_uint64  =  4;
+  optional float         optional_float   =  5;
+  optional double        optional_double  =  6;
+  optional bool          optional_bool    =  7;
+  optional string        optional_string  =  8;
+  optional NestedEnum    optional_enum    =  9;
+  optional NestedMessage optional_message = 10;
+
+  repeated int32         repeated_int32   = 11;
+  repeated int64         repeated_int64   = 12;
+  repeated uint32        repeated_uint32  = 13;
+  repeated uint64        repeated_uint64  = 14;
+  repeated float         repeated_float   = 15;
+  repeated double        repeated_double  = 16;
+  repeated bool          repeated_bool    = 17;
+  repeated string        repeated_string  = 18;
+  repeated NestedEnum    repeated_enum    = 19;
+  repeated NestedMessage repeated_message = 20;
+
+  enum NestedEnum {
+    FOO = 1;
+    BAR = 2;
+    BAZ = 3;
+  }
+
+  message NestedMessage {
+    optional int32 a = 1;
+  }
+
+  extend TestExtensions {
+    optional int32 nested_extension = 102;
+  }
+}
+
+message TestExtensions {
+  extensions 100 to max;
+}
+
+extend TestExtensions {
+  optional int32 optional_int32_extension = 100;
+  optional TestAllTypes optional_message_extension = 101;
+}

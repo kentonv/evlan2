@@ -1,0 +1,74 @@
+// Copyright (c) 2006-2012 Google, Inc. and contributors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Author: Kenton Varda
+//
+// Protocol used between the Evlan client and server.  The client interactively
+// reads code typed by the user, then sends it to the server to be evaluated.
+
+syntax = "proto2";
+
+option cc_generic_services = true;
+
+import "evlan/proto/module.proto";
+
+package evlan;
+
+message EvaluatorRequest {
+  // The code to evaluate.
+  optional Module module = 1;
+
+  // If this is non-empty, the module should evaluate to a function whose
+  // inputs are previously-bound global variables.  This field lists the names
+  // of the variables to be passed to this function.  These must all match
+  // assign_to names from previous requests in the same context.
+  repeated string input_variable = 2;
+
+  // If provided, evaluate the expression in the given context.  If the
+  // expression assigns a variable, it will be attached to the context.  If
+  // other variables are already attached to the context, the code may refer
+  // to them.  If this ID has not been seen before, a new context is created.
+  // If no context ID is given, the statement is evaluated in isolation and
+  // no variable assignments are saved.
+  //
+  // The server may discard contexts that have not been used for awhile.  The
+  // client can prevent this by sending periodic dummy requests.
+  //
+  // The client should be sure to use a strong random number generator to
+  // generate IDs in order to avoid conflicts with other clients.
+  optional fixed64 context_id = 3;
+
+  // Variable name to which the result will be stored.  Requires that context_id
+  // is provided.
+  optional string assign_to = 4;
+
+  // Similar to assign_to, but maps the result as an import.  Future requests
+  // in the same context will be able to import the given name.
+  optional string map_as_import = 6;
+
+  // Set true to generate debug info.
+  optional bool debug_mode = 5 [default=false];
+}
+
+message EvaluatorResponse {
+  // The DebugString of the result value.
+  optional string result = 1;
+
+  // Debug information, provided if debug_mode was true in the request.
+  optional string debug_info = 2;
+}
+
+service EvaluatorService {
+  rpc Evaluate(EvaluatorRequest) returns(EvaluatorResponse);
+}

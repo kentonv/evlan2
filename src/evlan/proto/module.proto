@@ -1,0 +1,72 @@
+// Copyright (c) 2006-2012 Google, Inc. and contributors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Author: Kenton Varda
+
+syntax = "proto2";
+
+package evlan;
+
+// A module is just one big expression, represented in pure lambda calculus.
+//
+// An understanding of lambda calculus is helpful in understanding this format.
+// See:  http://en.wikipedia.org/wiki/Lambda_calculus
+message Module {
+  // A module is represented using pure lambda calculus:  a tree of
+  // abstractions, applications, and variables forming an expression that
+  // defines the module.
+  enum CodeNode {
+    // An application (function call).  Has two children.  The first evaluates
+    // to the function, the second to the parameter.
+    APPLICATION = 0;
+
+    // An abstraction (lambda expression / function definition).  Has one
+    // child, which is the body of the function.
+    ABSTRACTION = 1;
+
+    // 2 and up:  Refers to a parameter.  2 is the innermost function's
+    // parameter.  3 is the second-innermost function's parameter.  etc.
+    // If the index is greater than the number of function parameters defined
+    // in the current context, then it refers to a value in the import table,
+    // below.
+    FIRST_VARIABLE = 2;
+  }
+
+  // The code tree, in preorder.
+  repeated int32 code_tree = 1 [packed = true];
+
+  // Variables in the code tree whose indexes are too large to refer to function
+  // parameters instead refer to values on the constant table.  For example,
+  // given the code tree:
+  //   1, 1, 0, 0, 2, 3, 4
+  // Or, in readable form:
+  //   abstraction(abstraction(application(application(
+  //     variable(0), variable(1))), variable(2)))
+  // Here, the "variable(0)" and "variable(1)" refer to the parameters to the
+  // two abstractions.  However, there are only two such abstractions, so
+  // the "variable(2)" must refer to the first item on the constant table.
+  //
+  // Constant table indexes are ordered as shown below.  All imports come first,
+  // followed by integer constants, atom constants, and finally data blobs.
+  // The language may support constant types other than these by encoding them
+  // as data blobs and generating code which passes the data blob to an
+  // appropriate function to decode it at runtime.  In theory, integers and
+  // atoms could be handled this way too, but these constants are very common
+  // and representing them only as data blobs could be inefficient.  Also,
+  // bootstrapping issues could arise.
+  repeated string  imports           =  2;
+  repeated int32   int_constants     =  3 [packed = true];
+  repeated string  atom_constants    =  4;
+  repeated bytes   data_constants    =  5;
+}
